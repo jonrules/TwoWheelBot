@@ -28,7 +28,7 @@ struct AxisValues {
   int x;
   int y;
   int z;
-}
+};
 
 /* Timers */
 unsigned long time;
@@ -36,25 +36,18 @@ int dt = 100;
 
 /* Compass */
 LSM303 compass;
-float accelerometerScale = 0.5;
-int accelerometerXSensitivity = 50;
-int accelerometerXDirection = -1;
-int accelerometerXNeutral;
-int accelerometerYSensitivity = 50;
-int accelerometerYDirection = -1;
-int accelerometerYNeutral;
-int accelerometerZSensitivity = 100;
-int accelerometerZDirection = 1;
-int accelerometerZNeutral;
+float accelerometerScale = 0.4;
+AxisValues accelerometerSensitivity = { 50, 50, 700 };
+AxisValues accelerometerDirection = { -1, -1, 1 };
+AxisValues accelerometerNeutral;
 
 /* Gyro */
 L3G gyro;
-int gyroSensitivity = 700;
-float gyroScale = 1;
-int gyroMax = 20000;
-int gyroXDirection = 1;
-int gyroYDirection = 1;
-int gyroZDirection = -1;
+int gyroSensitivity = 1;
+float gyroScale = 0.3;
+int gyroAccelerometerCutoff = 2000;
+AxisValues gyroDirection = { 1, 1, -1 };
+AxisValues gyroNeutral;
 AxisValues gyroValues;
 
 /* Maestro servo controller */
@@ -71,9 +64,8 @@ int calculateAccelerometerOffset(int value, int neutralValue) {
   return offset;
 }
 
-int calculateRotationOffset(int value) {
-  //int offset = (int)(gyroScale*value);
-  int offset = gyroMax*exp((float)value/2);
+int calculateRotationOffset(int value, int neutralValue) {
+  int offset = (int)(gyroScale*(value - neutralValue));
   Serial.println(offset);
   return offset;
 }
@@ -98,32 +90,53 @@ int calibrate() {
   delay(1000);
   ledRed(1);
   delay(1000);
-  
-  gyro.read();
-  compass.read();
 
-  /* Calibarate accelerometer */
-  accelerometerXNeutral = compass.a.x;
-  accelerometerYNeutral = compass.a.y;
-  accelerometerZNeutral = compass.a.z;
-  Serial.print("Accelerometer Neutral: (");
-  Serial.print(accelerometerXNeutral);
+  /* Calibrate gyro */
+  gyro.read();
+  gyroNeutral.x = gyro.g.x;
+  gyroNeutral.y = gyro.g.y;
+  gyroNeutral.z = gyro.g.z;
+  Serial.print("Gyro Neutral: (");
+  Serial.print(gyroNeutral.x);
   Serial.print(", ");
-  Serial.print(accelerometerYNeutral);
+  Serial.print(gyroNeutral.y);
   Serial.print(", ");
-  Serial.print(accelerometerZNeutral);
+  Serial.print(gyroNeutral.z);
   Serial.println(")");
 
   ledYellow(1);
+  delay(1000);
+  ledRed(0);
+  ledYellow(0);
+  delay(2000);
+  ledYellow(1);
+  ledRed(1);
+  delay(2000);
+
+  /* Calibarate compass/accelerometer */
+  compass.read();
+  accelerometerNeutral.x = compass.a.x;
+  accelerometerNeutral.y = compass.a.y;
+  accelerometerNeutral.z = compass.a.z;
+  Serial.print("Accelerometer Neutral: (");
+  Serial.print(accelerometerNeutral.x);
+  Serial.print(", ");
+  Serial.print(accelerometerNeutral.y);
+  Serial.print(", ");
+  Serial.print(accelerometerNeutral.z);
+  Serial.println(")");
+
   ledGreen(1);
   delay(1000);
   ledRed(0);
   ledYellow(0);
   ledGreen(0);
   delay(1000);
+  ledRed(1);
   ledYellow(1);
   ledGreen(1);
   delay(1000);
+  ledRed(0);
   ledYellow(0);
   ledGreen(0);
 }
@@ -137,11 +150,6 @@ void setup() {
     delay(2000);
     Serial.println("Failed to autodetect gyro type!");
     while (1);
-  }
-  else
-  {
-    delay(2000);
-    Serial.println("Gyro initialized!");
   }
   gyro.enableDefault();
 
@@ -174,24 +182,25 @@ void loop() {
   int rightServoPosition = servoNeutral;
 
   int zAccelerometerOffset;
-  if (abs(compass.a.z) > accelerometerZSensitivity)
+  int zAccelerometerDiff = abs(compass.a.z - accelerometerNeutral.z);
+  if (zAccelerometerDiff > accelerometerSensitivity.z)
   {
-    zAccelerometerOffset = calculateAccelerometerOffset((int)compass.a.z, accelerometerZNeutral);
-    leftServoPosition += accelerometerZDirection * zAccelerometerOffset;
-    rightServoPosition -= accelerometerZDirection * zAccelerometerOffset;
+    zAccelerometerOffset = calculateAccelerometerOffset((int)compass.a.z, accelerometerNeutral.z);
+    leftServoPosition += accelerometerDirection.z * zAccelerometerOffset;
+    rightServoPosition -= accelerometerDirection.z * zAccelerometerOffset;
   }
 
   int yRotationOffset;
-  if (abs(gyro.g.y) > gyroSensitivity)
+  if (abs(gyro.g.y - gyroNeutral.y) > gyroSensitivity && zAccelerometerDiff < gyroAccelerometerCutoff)
   {
-    yRotationOffset = calculateRotationOffset((int)gyro.g.y);
-    leftServoPosition += gyroYDirection * yRotationOffset;
-    rightServoPosition -= gyroYDirection * yRotationOffset;
+    yRotationOffset = calculateRotationOffset((int)gyro.g.y, gyroNeutral.y);
+    leftServoPosition += gyroDirection.y * yRotationOffset;
+    rightServoPosition -= gyroDirection.y * yRotationOffset;
   }
 
-  Serial.print(", Compass.a.z:");
+  Serial.print("Compass.a.z:");
   Serial.print((int)compass.a.z);
-  Serial.print("Gyro.g.y:");
+  Serial.print(", Gyro.g.y:");
   Serial.print((int)gyro.g.y);
   Serial.print(", Left:");
   Serial.print(leftServoPosition);
