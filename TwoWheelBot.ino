@@ -42,13 +42,14 @@ unsigned long initialTime;
 /* lsm */
 LSM303 lsm;
 AxisValues accelerometerNeutral;
-int accelerometerSensitivity = 100;
-int accelerometerAngleDivisor = 500;
+AxisValues accelerometerPhase = { 0, 0, 0 };
+int accelerometerSensitivity = 1;
+float accelerometerAngleCorrectionFactor = 0.1;
 
 /* Gyro */
 L3G gyro;
 // Sensitivity in units of mdps/LSB
-double gyroSensitivity = 8.75;
+float gyroSensitivity = 8.75;
 // Neutral values in units of LSB (raw reading)
 AxisValues gyroNeutral;
 // Angle from initial position in units of md/s
@@ -64,25 +65,29 @@ int rightServoTrim = 100;
 int servoMin = 4000;
 int servoMax = 8000;
 int servoNeutral = 6000;
+int servoOffsetHigh = 2000;
+int servoOffsetLow = 1000;
+int servoAngleTolerance = 2000;
 
 
 long calculateAngleOffset(int value, int neutralValue, unsigned long dt) {
-  long offset = (long)(gyroSensitivity*(value - neutralValue)*dt/1000);
+  long offset = (long)(value - neutralValue)*gyroSensitivity/1000*dt;
   return offset;
 }
 
-int calculateAccelerometerAngleOffset(int value, int neutralValue, long angle) {
-  int offset = ((value - neutralValue)*accelerometerSensitivity - angle)/accelerometerAngleDivisor;
-  /*Serial.print("offset:");
-  Serial.print(offset);
-  Serial.print(", angle:");
-  Serial.println(angle);*/
+long calculateAccelerometerAngleOffset(int value, int neutralValue, long angle) {
+  long offset = ((long)(value - neutralValue)*90 - angle)*accelerometerAngleCorrectionFactor;
   return offset;
 }
 
 int calculateServoOffset(long angle) {
-  int offset = (int)(angle/gyroAngleDivisor);
-  return offset;
+  long absAngle = abs(angle);
+  if (absAngle > servoAngleTolerance)
+  {
+    int offset = (int)(absAngle/angle)*servoOffsetLow;
+    return offset;
+  }
+  return 0;
 }
 
 int getSafeServoPosition(int servoPosition) {
