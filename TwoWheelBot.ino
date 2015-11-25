@@ -44,7 +44,9 @@ LSM303 lsm;
 AxisValues accelerometerNeutral;
 AxisValues accelerometerPhase = { 0, 0, 0 };
 int accelerometerSensitivity = 1;
-float accelerometerAngleCorrectionFactor = 0.1;
+float accelerometerAngleCorrectionFactor = 1.0;
+// Angle from initial position in units of md/s
+LongAxisValues offsetAngle;
 
 /* Gyro */
 L3G gyro;
@@ -52,42 +54,40 @@ L3G gyro;
 float gyroSensitivity = 8.75;
 // Neutral values in units of LSB (raw reading)
 AxisValues gyroNeutral;
-// Angle from initial position in units of md/s
-LongAxisValues gyroAngle;
-int gyroAngleDivisor = 2;
+float gyroAngleCorrectionFactor = 0.5;
 
 /* Maestro servo controller */
 MiniMaestro maestro(maestroSerial);
 int leftServo = 0;
 int rightServo = 1;
 int leftServoTrim = 0;
-int rightServoTrim = 100;
+int rightServoTrim = 300;
 int servoMin = 4000;
 int servoMax = 8000;
 int servoNeutral = 6000;
 int servoOffsetHigh = 2000;
-int servoOffsetLow = 1000;
-int servoAngleTolerance = 2000;
+int servoOffsetLow = 1500;
+int servoAngleTolerance = 1;
 
 
 long calculateAngleOffset(int value, int neutralValue, unsigned long dt) {
-  long offset = (long)(value - neutralValue)*gyroSensitivity/1000*dt;
+  long offset = (long)(value - neutralValue)*gyroSensitivity/1000*dt*gyroAngleCorrectionFactor;
   return offset;
 }
 
-long calculateAccelerometerAngleOffset(int value, int neutralValue, long angle) {
-  long offset = ((long)(value - neutralValue)*90 - angle)*accelerometerAngleCorrectionFactor;
+long calculateAccelerometerAngleOffset(int value, int neutralValue) {
+  long offset = (long)(value - neutralValue)*90*accelerometerAngleCorrectionFactor;
   return offset;
 }
 
 int calculateServoOffset(long angle) {
-  long absAngle = abs(angle);
-  if (absAngle > servoAngleTolerance)
-  {
-    int offset = (int)(absAngle/angle)*servoOffsetLow;
-    return offset;
+  int deg = angle/1000;
+  if (abs(deg) < 1) {
+    return 0;
   }
-  return 0;
+  char sign = abs(deg)/deg;
+  int offset = 50*sign + deg*100;
+  return offset;
 }
 
 int getSafeServoPosition(int servoPosition) {
@@ -114,9 +114,9 @@ void defaultCalibration() {
   lsm.m_max = (LSM303::vector<int16_t>) {
     +32767, +32767, +32767
   };
-  accelerometerNeutral.x = 1000;
-  accelerometerNeutral.y = -50;
-  accelerometerNeutral.z = 50;
+  accelerometerNeutral.x = -40;
+  accelerometerNeutral.y = 30;
+  accelerometerNeutral.z = -950;
 
   ledRed(1);
   delay(1000);
@@ -228,23 +228,24 @@ void loop() {
   int leftServoPosition = servoNeutral;
   int rightServoPosition = servoNeutral;
 
-  //gyroAngle.x += calculateAngleOffset((int)gyro.g.x, gyroNeutral.x, dt);
-  gyroAngle.y += calculateAngleOffset((int)gyro.g.y, gyroNeutral.y, dt);
-  gyroAngle.y += calculateAccelerometerAngleOffset((int)lsm.a.z >> 4, accelerometerNeutral.z, gyroAngle.y);
-  //gyroAngle.z += calculateAngleOffset((int)gyro.g.z, gyroNeutral.z, dt);
+  offsetAngle.x = calculateAccelerometerAngleOffset((int)lsm.a.y >> 4, accelerometerNeutral.y);
+  offsetAngle.x -= calculateAngleOffset((int)gyro.g.x, gyroNeutral.x, dt);
+  //offsetAngle.y += calculateAngleOffset((int)gyro.g.y, gyroNeutral.y, dt);
+  //offsetAngle.y += calculateAccelerometerAngleOffset((int)lsm.a.z >> 4, accelerometerNeutral.z, offsetAngle.y);
+  //offsetAngle.z += calculateAngleOffset((int)gyro.g.z, gyroNeutral.z, dt);
 
-  int servoOffset = calculateServoOffset(gyroAngle.y);
-  leftServoPosition += servoOffset;
-  rightServoPosition -= servoOffset;
+  int servoOffset = calculateServoOffset(offsetAngle.x);
+  leftServoPosition -= servoOffset;
+  rightServoPosition += servoOffset;
 
   Serial.print("X:");
-  Serial.print(gyroAngle.x/1000);
+  Serial.print(offsetAngle.x/1000);
   Serial.print(", Y:");
-  Serial.print(gyroAngle.y/1000);
+  Serial.print(offsetAngle.y/1000);
   Serial.print(", Z: ");
-  Serial.print(gyroAngle.z/1000);
-  Serial.print(", Acc.z:");
-  Serial.print((int)lsm.a.z);
+  Serial.print(offsetAngle.z/1000);
+  Serial.print(", Acc.y:");
+  Serial.print((int)lsm.a.y >> 4);
   Serial.print(", Left:");
   Serial.print(leftServoPosition);
   Serial.print(", Right:");
