@@ -19,6 +19,9 @@
   SoftwareSerial maestroSerial(10, 11);
 #endif
 
+/* Include PID Controller */
+#include <PidController.h>
+
 /* Include utils libraries */
 #include <math.h>
 
@@ -36,25 +39,17 @@ struct LongAxisValues {
   long z;
 };
 
-/* Timers */
-unsigned long initialTime;
+/* PID Controller */
+long targetValue = 0l;
+unsigned char pidLength = 5;
+unsigned char terms = PidController<long>::TERM_INTEGRAL;
+PidController<long>  pidController(targetValue, pidLength, terms);
 
 /* lsm */
 LSM303 lsm;
 AxisValues accelerometerNeutral;
 AxisValues accelerometerPhase = { 0, 0, 0 };
-int accelerometerSensitivity = 1;
-float accelerometerAngleCorrectionFactor = 1.0;
-// Angle from initial position in units of md/s
 LongAxisValues offsetAngle;
-
-/* Gyro */
-L3G gyro;
-// Sensitivity in units of mdps/LSB
-float gyroSensitivity = 8.75;
-// Neutral values in units of LSB (raw reading)
-AxisValues gyroNeutral;
-float gyroAngleCorrectionFactor = 0.5;
 
 /* Maestro servo controller */
 MiniMaestro maestro(maestroSerial);
@@ -70,23 +65,13 @@ int servoOffsetLow = 1500;
 int servoAngleTolerance = 1;
 
 
-long calculateAngleOffset(int value, int neutralValue, unsigned long dt) {
-  long offset = (long)(value - neutralValue)*gyroSensitivity/1000*dt*gyroAngleCorrectionFactor;
-  return offset;
-}
-
 long calculateAccelerometerAngleOffset(int value, int neutralValue) {
-  long offset = (long)(value - neutralValue)*90*accelerometerAngleCorrectionFactor;
+  long offset = (long)(value - neutralValue)*90;
   return offset;
 }
 
 int calculateServoOffset(long angle) {
-  int deg = angle/1000;
-  if (abs(deg) < 1) {
-    return 0;
-  }
-  char sign = abs(deg)/deg;
-  int offset = 50*sign + deg*100;
+  int offset = angle/10;
   return offset;
 }
 
@@ -103,10 +88,6 @@ int getSafeServoPosition(int servoPosition) {
 void defaultCalibration() {
   maestro.setTarget(leftServo, servoNeutral);
   maestro.setTarget(rightServo, servoNeutral);
-
-  gyroNeutral.x = -904;
-  gyroNeutral.y = 471;
-  gyroNeutral.z = -216;
 
   lsm.m_min = (LSM303::vector<int16_t>) {
     -32767, -32767, -32767
@@ -133,24 +114,6 @@ void calibrate() {
   
   ledRed(1);
   delay(1000);
-  ledRed(0);
-  delay(1000);
-  ledRed(1);
-  delay(1000);
-
-  /* Calibrate gyro */
-  gyro.read();
-  gyroNeutral.x = (int)gyro.g.x;
-  gyroNeutral.y = (int)gyro.g.y;
-  gyroNeutral.z = (int)gyro.g.z;
-  Serial.print("Gyro Neutral: (");
-  Serial.print(gyroNeutral.x);
-  Serial.print(", ");
-  Serial.print(gyroNeutral.y);
-  Serial.print(", ");
-  Serial.print(gyroNeutral.z);
-  Serial.println(")");
-
   ledYellow(1);
   delay(1000);
   ledRed(0);
@@ -198,14 +161,6 @@ void setup() {
   Serial.begin(9600);
   Wire.begin();
 
-  if (!gyro.init(L3G::deviceType::device_D20H, L3G::sa0State::sa0_high))
-  {
-    delay(2000);
-    Serial.println("Failed to autodetect gyro type!");
-    while (1);
-  }
-  gyro.enableDefault();
-
   lsm.init();
   lsm.enableDefault();
 
@@ -214,29 +169,31 @@ void setup() {
   defaultCalibration();
   //calibrate();
 
-  // Initial values
-  initialTime = millis();
+  // PID Controller
+  pidController.setProportionalGain(1.0);
+  pidController.setIntegralGain(0.00005);
+  pidController.setDerivativeGain(1.0);
 }
 
 void loop() {
-  gyro.read();
   lsm.read();
-
-  unsigned long currentTime = millis();
-  unsigned long dt = currentTime - initialTime;
 
   int leftServoPosition = servoNeutral;
   int rightServoPosition = servoNeutral;
 
-  offsetAngle.x = calculateAccelerometerAngleOffset((int)lsm.a.y >> 4, accelerometerNeutral.y);
-  offsetAngle.x -= calculateAngleOffset((int)gyro.g.x, gyroNeutral.x, dt);
-  //offsetAngle.y += calculateAngleOffset((int)gyro.g.y, gyroNeutral.y, dt);
-  //offsetAngle.y += calculateAccelerometerAngleOffset((int)lsm.a.z >> 4, accelerometerNeutral.z, offsetAngle.y);
-  //offsetAngle.z += calculateAngleOffset((int)gyro.g.z, gyroNeutral.z, dt);
+  offsetAngle.x = calculateAccelerometerAngleOffset((int)lsm.a.x >> 4, accelerometerNeutral.x);
+  offsetAngle.y = calculateAccelerometerAngleOffset((int)lsm.a.y >> 4, accelerometerNeutral.y);
+  offsetAngle.z = calculateAccelerometerAngleOffset((int)lsm.a.z >> 4, accelerometerNeutral.z);
 
-  int servoOffset = calculateServoOffset(offsetAngle.x);
+  pidController.addValue(offsetAngle.y);
+
+  //int servoOffset = calculateServoOffset(offsetAngle.x);
+  long result = pidController.calculate();
+  int servoOffset = (int)result;
   leftServoPosition -= servoOffset;
   rightServoPosition += servoOffset;
+  maestro.setTarget(leftServo, getSafeServoPosition(leftServoPosition + leftServoTrim));
+  maestro.setTarget(rightServo, getSafeServoPosition(rightServoPosition + rightServoTrim));
 
   Serial.print("X:");
   Serial.print(offsetAngle.x/1000);
@@ -246,14 +203,11 @@ void loop() {
   Serial.print(offsetAngle.z/1000);
   Serial.print(", Acc.y:");
   Serial.print((int)lsm.a.y >> 4);
+  Serial.print(", Result:");
+  Serial.print(result);
   Serial.print(", Left:");
   Serial.print(leftServoPosition);
   Serial.print(", Right:");
   Serial.println(rightServoPosition);
-
-  maestro.setTarget(leftServo, getSafeServoPosition(leftServoPosition + leftServoTrim));
-  maestro.setTarget(rightServo, getSafeServoPosition(rightServoPosition + rightServoTrim));
-
-  initialTime = currentTime;
 }
 
