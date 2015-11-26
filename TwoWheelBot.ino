@@ -41,8 +41,8 @@ struct LongAxisValues {
 
 /* PID Controller */
 long targetValue = 0l;
-unsigned char pidLength = 5;
-unsigned char terms = PidController<long>::TERM_INTEGRAL;
+unsigned char pidLength = 10;
+unsigned char terms = PidController<long>::TERM_PROPORTIONAL | PidController<long>::TERM_INTEGRAL | PidController<long>::TERM_DERIVATIVE;
 PidController<long>  pidController(targetValue, pidLength, terms);
 
 /* lsm */
@@ -170,9 +170,9 @@ void setup() {
   //calibrate();
 
   // PID Controller
-  pidController.setProportionalGain(1.0);
-  pidController.setIntegralGain(0.00005);
-  pidController.setDerivativeGain(1.0);
+  pidController.setProportionalGain(0.004);
+  pidController.setIntegralGain(0.001);
+  pidController.setDerivativeGain(0.003);
 }
 
 void loop() {
