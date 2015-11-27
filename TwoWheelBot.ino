@@ -41,9 +41,8 @@ struct LongAxisValues {
 
 /* PID Controller */
 long targetValue = 0l;
-unsigned char pidLength = 10;
 unsigned char terms = PidController<long>::TERM_PROPORTIONAL | PidController<long>::TERM_INTEGRAL | PidController<long>::TERM_DERIVATIVE;
-PidController<long>  pidController(targetValue, pidLength, terms);
+PidController<long>  pidController(targetValue, 10, 0x07);
 
 /* lsm */
 LSM303 lsm;
@@ -96,7 +95,7 @@ void defaultCalibration() {
     +32767, +32767, +32767
   };
   accelerometerNeutral.x = -40;
-  accelerometerNeutral.y = 30;
+  accelerometerNeutral.y = -80;
   accelerometerNeutral.z = -950;
 
   ledRed(1);
@@ -170,9 +169,9 @@ void setup() {
   //calibrate();
 
   // PID Controller
-  pidController.setProportionalGain(0.004);
-  pidController.setIntegralGain(0.001);
-  pidController.setDerivativeGain(0.003);
+  pidController.setProportionalGain(0.5);
+  pidController.setIntegralGain(0.01);
+  pidController.setDerivativeGain(50.0);
 }
 
 void loop() {
@@ -185,10 +184,7 @@ void loop() {
   offsetAngle.y = calculateAccelerometerAngleOffset((int)lsm.a.y >> 4, accelerometerNeutral.y);
   offsetAngle.z = calculateAccelerometerAngleOffset((int)lsm.a.z >> 4, accelerometerNeutral.z);
 
-  pidController.addValue(offsetAngle.y);
-
-  //int servoOffset = calculateServoOffset(offsetAngle.x);
-  long result = pidController.calculate();
+  long result = pidController.calculate(offsetAngle.y/10);
   int servoOffset = (int)result;
   leftServoPosition -= servoOffset;
   rightServoPosition += servoOffset;
@@ -201,8 +197,6 @@ void loop() {
   Serial.print(offsetAngle.y/1000);
   Serial.print(", Z: ");
   Serial.print(offsetAngle.z/1000);
-  Serial.print(", Acc.y:");
-  Serial.print((int)lsm.a.y >> 4);
   Serial.print(", Result:");
   Serial.print(result);
   Serial.print(", Left:");
