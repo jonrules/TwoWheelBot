@@ -42,7 +42,7 @@ struct LongAxisValues {
 /* PID Controller */
 long targetValue = 0l;
 unsigned char terms = PidController<long>::TERM_PROPORTIONAL | PidController<long>::TERM_INTEGRAL | PidController<long>::TERM_DERIVATIVE;
-PidController<long>  pidController(targetValue, 10, 0x07);
+PidController<long>  pidController(targetValue, 10, 0x07, 100);
 
 /* lsm */
 LSM303 lsm;
@@ -95,7 +95,7 @@ void defaultCalibration() {
     +32767, +32767, +32767
   };
   accelerometerNeutral.x = -40;
-  accelerometerNeutral.y = -80;
+  accelerometerNeutral.y = -10;
   accelerometerNeutral.z = -950;
 
   ledRed(1);
@@ -170,8 +170,8 @@ void setup() {
 
   // PID Controller
   pidController.setProportionalGain(0.5);
-  pidController.setIntegralGain(0.01);
-  pidController.setDerivativeGain(50.0);
+  pidController.setIntegralGain(0.007);
+  pidController.setDerivativeGain(15.0);
 }
 
 void loop() {
