@@ -6,18 +6,8 @@
 #include <L3G.h>
 #include <LSM303.h>
 
-/* Include pololu maestro libraries */
-#include <PololuMaestro.h>
-/* On boards with a hardware serial port available for use, use
-  that port to communicate with the Maestro. For other boards,
-  create a SoftwareSerial object using pin 10 to receive (RX) and
-  pin 11 to transmit (TX). */
-#ifdef SERIAL_PORT_HARDWARE_OPEN
-  #define maestroSerial SERIAL_PORT_HARDWARE_OPEN
-#else
-  #include <SoftwareSerial.h>
-  SoftwareSerial maestroSerial(10, 11);
-#endif
+/* Include motor driver libraries */
+#include "DualVNH5019MotorShield.h"
 
 /* Include PID Controller */
 #include <PidController.h>
@@ -42,7 +32,7 @@ struct LongAxisValues {
 /* PID Controller */
 long targetValue = 0l;
 unsigned char terms = PidController<long>::TERM_PROPORTIONAL | PidController<long>::TERM_INTEGRAL | PidController<long>::TERM_DERIVATIVE;
-PidController<long>  pidController(targetValue, 10, 0x07, 100);
+PidController<long>  pidController(targetValue, 1, 0x01, 10);
 
 /* lsm */
 LSM303 lsm;
@@ -50,44 +40,39 @@ AxisValues accelerometerNeutral;
 AxisValues accelerometerPhase = { 0, 0, 0 };
 LongAxisValues offsetAngle;
 
-/* Maestro servo controller */
-MiniMaestro maestro(maestroSerial);
-int leftServo = 0;
-int rightServo = 1;
-int leftServoTrim = 0;
-int rightServoTrim = 300;
-int servoMin = 4000;
-int servoMax = 8000;
-int servoNeutral = 6000;
-int servoOffsetHigh = 2000;
-int servoOffsetLow = 1500;
-int servoAngleTolerance = 1;
+/* Motor driver */
+DualVNH5019MotorShield motorDriver(A1, A2, A0, PB7, A4, A5, A3, PD6);
+int motorDriverMin = -400;
+int motorDriverMax = 400;
+int motorDriverNeutral = 0;
 
+void stopIfMotorFault()
+{
+  if (motorDriver.getM1Fault())
+  {
+    Serial.println("M1 fault");
+    while(1);
+  }
+  if (motorDriver.getM2Fault())
+  {
+    Serial.println("M2 fault");
+    while(1);
+  }
+}
+
+void setMotorSpeeds(int leftSpeed, int rightSpeed) {
+  motorDriver.setM1Speed(rightSpeed);
+  stopIfMotorFault();
+  motorDriver.setM2Speed(leftSpeed);
+  stopIfMotorFault();
+}
 
 long calculateAccelerometerAngleOffset(int value, int neutralValue) {
   long offset = (long)(value - neutralValue)*90;
   return offset;
 }
 
-int calculateServoOffset(long angle) {
-  int offset = angle/10;
-  return offset;
-}
-
-int getSafeServoPosition(int servoPosition) {
-  if (servoPosition > servoMax) {
-    return servoMax;
-  }
-  if (servoPosition < servoMin) {
-    return servoMin;
-  }
-  return servoPosition;
-}
-
 void defaultCalibration() {
-  maestro.setTarget(leftServo, servoNeutral);
-  maestro.setTarget(rightServo, servoNeutral);
-
   lsm.m_min = (LSM303::vector<int16_t>) {
     -32767, -32767, -32767
   };
@@ -95,7 +80,7 @@ void defaultCalibration() {
     +32767, +32767, +32767
   };
   accelerometerNeutral.x = -40;
-  accelerometerNeutral.y = -10;
+  accelerometerNeutral.y = 10;
   accelerometerNeutral.z = -950;
 
   ledRed(1);
@@ -108,9 +93,6 @@ void defaultCalibration() {
 }
 
 void calibrate() {
-  maestro.setTarget(leftServo, servoNeutral);
-  maestro.setTarget(rightServo, servoNeutral);
-  
   ledRed(1);
   delay(1000);
   ledYellow(1);
@@ -163,22 +145,22 @@ void setup() {
   lsm.init();
   lsm.enableDefault();
 
-  maestroSerial.begin(9600);
+  motorDriver.init();
 
   defaultCalibration();
   //calibrate();
 
   // PID Controller
-  pidController.setProportionalGain(0.5);
-  pidController.setIntegralGain(0.007);
-  pidController.setDerivativeGain(15.0);
+  pidController.setProportionalGain(3.5);
+  pidController.setIntegralGain(0.08);
+  pidController.setDerivativeGain(25.0);
 }
 
 void loop() {
   lsm.read();
 
-  int leftServoPosition = servoNeutral;
-  int rightServoPosition = servoNeutral;
+  int leftSpeed = motorDriverNeutral;
+  int rightSpeed = motorDriverNeutral;
 
   offsetAngle.x = calculateAccelerometerAngleOffset((int)lsm.a.x >> 4, accelerometerNeutral.x);
   offsetAngle.y = calculateAccelerometerAngleOffset((int)lsm.a.y >> 4, accelerometerNeutral.y);
@@ -186,10 +168,9 @@ void loop() {
 
   long result = pidController.calculate(offsetAngle.y/10);
   int servoOffset = (int)result;
-  leftServoPosition -= servoOffset;
-  rightServoPosition += servoOffset;
-  maestro.setTarget(leftServo, getSafeServoPosition(leftServoPosition + leftServoTrim));
-  maestro.setTarget(rightServo, getSafeServoPosition(rightServoPosition + rightServoTrim));
+  leftSpeed -= servoOffset;
+  rightSpeed += servoOffset;
+  setMotorSpeeds(leftSpeed, rightSpeed);
 
   Serial.print("X:");
   Serial.print(offsetAngle.x/1000);
@@ -200,8 +181,8 @@ void loop() {
   Serial.print(", Result:");
   Serial.print(result);
   Serial.print(", Left:");
-  Serial.print(leftServoPosition);
+  Serial.print(leftSpeed);
   Serial.print(", Right:");
-  Serial.println(rightServoPosition);
+  Serial.println(rightSpeed);
 }
 
