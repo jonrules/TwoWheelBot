@@ -32,7 +32,7 @@ struct LongAxisValues {
 /* PID Controller */
 long targetValue = 0l;
 unsigned char terms = PidController<long>::TERM_PROPORTIONAL | PidController<long>::TERM_INTEGRAL | PidController<long>::TERM_DERIVATIVE;
-PidController<long>  pidController(targetValue, 1, 0x01, 10);
+PidController<long>  pidController(targetValue, 100, 0x03, 10);
 
 /* lsm */
 LSM303 lsm;
@@ -45,6 +45,7 @@ DualVNH5019MotorShield motorDriver(A1, A2, A0, PB7, A4, A5, A3, PD6);
 int motorDriverMin = -400;
 int motorDriverMax = 400;
 int motorDriverNeutral = 0;
+int motorDirection = -1;
 
 void stopIfMotorFault()
 {
@@ -61,9 +62,8 @@ void stopIfMotorFault()
 }
 
 void setMotorSpeeds(int leftSpeed, int rightSpeed) {
-  motorDriver.setM1Speed(rightSpeed);
-  stopIfMotorFault();
-  motorDriver.setM2Speed(leftSpeed);
+  motorDriver.setM1Speed(rightSpeed*motorDirection);
+  motorDriver.setM2Speed(leftSpeed*motorDirection);
   stopIfMotorFault();
 }
 
@@ -80,7 +80,7 @@ void defaultCalibration() {
     +32767, +32767, +32767
   };
   accelerometerNeutral.x = -40;
-  accelerometerNeutral.y = 10;
+  accelerometerNeutral.y = 0;
   accelerometerNeutral.z = -950;
 
   ledRed(1);
@@ -151,8 +151,8 @@ void setup() {
   //calibrate();
 
   // PID Controller
-  pidController.setProportionalGain(3.5);
-  pidController.setIntegralGain(0.08);
+  pidController.setProportionalGain(0.01);
+  pidController.setIntegralGain(0.0002);
   pidController.setDerivativeGain(25.0);
 }
 
@@ -167,9 +167,9 @@ void loop() {
   offsetAngle.z = calculateAccelerometerAngleOffset((int)lsm.a.z >> 4, accelerometerNeutral.z);
 
   long result = pidController.calculate(offsetAngle.y/10);
-  int servoOffset = (int)result;
-  leftSpeed -= servoOffset;
-  rightSpeed += servoOffset;
+  int motorOffset = (int)result;
+  leftSpeed += motorOffset;
+  rightSpeed += motorOffset;
   setMotorSpeeds(leftSpeed, rightSpeed);
 
   Serial.print("X:");
