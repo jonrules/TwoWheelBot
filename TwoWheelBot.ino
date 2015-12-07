@@ -9,10 +9,9 @@
 /* Include motor driver libraries */
 #include "DualVNH5019MotorShield.h"
 
-/* Include PID Controller */
-#include <PidController.h>
-
 /* Include utils libraries */
+#include <GyroAngleFilter.h>
+#include <PidController.h>
 #include <math.h>
 
 
@@ -25,20 +24,29 @@ struct AxisValues {
 
 struct LongAxisValues {
   long x;
-  long int y;
+  long y;
   long z;
 };
 
 /* PID Controller */
 long targetValue = 0l;
 unsigned char terms = PidController<long>::TERM_PROPORTIONAL | PidController<long>::TERM_INTEGRAL | PidController<long>::TERM_DERIVATIVE;
-PidController<long>  pidController(targetValue, 100, 0x03, 10);
+PidController<long>  pidController(targetValue, 10, 0x07, 0);
 
 /* lsm */
 LSM303 lsm;
 AxisValues accelerometerNeutral;
 AxisValues accelerometerPhase = { 0, 0, 0 };
-LongAxisValues offsetAngle;
+LongAxisValues accelerometerAngle;
+
+/* Gyro */
+L3G gyro;
+AxisValues gyroNeutral;
+LongAxisValues gyroVelocity;
+// Sensitivity in units of mdps/LSB
+float gyroSensitivity = 8.75;
+// Gyro angle filter
+GyroAngleFilter<long> gyroAngleFilter;
 
 /* Motor driver */
 DualVNH5019MotorShield motorDriver(A1, A2, A0, PB7, A4, A5, A3, PD6);
@@ -67,12 +75,21 @@ void setMotorSpeeds(int leftSpeed, int rightSpeed) {
   stopIfMotorFault();
 }
 
+long calculateGyroVelocity(int value, int neutralValue) {
+  long velocity = (long)(value - neutralValue)*gyroSensitivity/1000;
+  return velocity;
+}
+
 long calculateAccelerometerAngleOffset(int value, int neutralValue) {
   long offset = (long)(value - neutralValue)*90;
   return offset;
 }
 
 void defaultCalibration() {
+  gyroNeutral.x = -904;
+  gyroNeutral.y = 471;
+  gyroNeutral.z = -216;
+  
   lsm.m_min = (LSM303::vector<int16_t>) {
     -32767, -32767, -32767
   };
@@ -93,6 +110,12 @@ void defaultCalibration() {
 }
 
 void calibrate() {
+  /* Calibrate gyro */
+  gyro.read();
+  gyroNeutral.x = (int)gyro.g.x;
+  gyroNeutral.y = (int)gyro.g.y;
+  gyroNeutral.z = (int)gyro.g.z;
+  
   ledRed(1);
   delay(1000);
   ledYellow(1);
@@ -145,39 +168,58 @@ void setup() {
   lsm.init();
   lsm.enableDefault();
 
+  if (!gyro.init(L3G::deviceType::device_D20H, L3G::sa0State::sa0_high))
+  {
+    delay(2000);
+    Serial.println("Failed to autodetect gyro type!");
+    while (1);
+  }
+  gyro.enableDefault();
+
   motorDriver.init();
 
   defaultCalibration();
   //calibrate();
 
+  // Gyro angle filter
+  gyroAngleFilter.setCorrectionFactor(0.1);
+  gyroAngleFilter.setSampleTime(10);
+  gyroAngleFilter.init(0);
+
   // PID Controller
-  pidController.setProportionalGain(0.01);
-  pidController.setIntegralGain(0.0002);
-  pidController.setDerivativeGain(25.0);
+  pidController.setProportionalGain(0.001);
+  pidController.setIntegralGain(0.0003);
+  pidController.setDerivativeGain(0.15);
 }
 
 void loop() {
+  gyro.read();
   lsm.read();
 
   int leftSpeed = motorDriverNeutral;
   int rightSpeed = motorDriverNeutral;
 
-  offsetAngle.x = calculateAccelerometerAngleOffset((int)lsm.a.x >> 4, accelerometerNeutral.x);
-  offsetAngle.y = calculateAccelerometerAngleOffset((int)lsm.a.y >> 4, accelerometerNeutral.y);
-  offsetAngle.z = calculateAccelerometerAngleOffset((int)lsm.a.z >> 4, accelerometerNeutral.z);
+  gyroVelocity.x = calculateGyroVelocity((int)gyro.g.x, gyroNeutral.x);
+  gyroVelocity.y = calculateGyroVelocity((int)gyro.g.y, gyroNeutral.y);
+  gyroVelocity.z = calculateGyroVelocity((int)gyro.g.z, gyroNeutral.z);
 
-  long result = pidController.calculate(offsetAngle.y/10);
+  accelerometerAngle.x = calculateAccelerometerAngleOffset((int)lsm.a.x >> 4, accelerometerNeutral.x);
+  accelerometerAngle.y = calculateAccelerometerAngleOffset((int)lsm.a.y >> 4, accelerometerNeutral.y);
+  accelerometerAngle.z = calculateAccelerometerAngleOffset((int)lsm.a.z >> 4, accelerometerNeutral.z);
+
+  long result = pidController.calculate(gyroAngleFilter.calculate(gyroVelocity.z, -accelerometerAngle.y));
+  //long result = gyroAngleFilter.calculate(gyroVelocity.z, -accelerometerAngle.y);
   int motorOffset = (int)result;
   leftSpeed += motorOffset;
   rightSpeed += motorOffset;
   setMotorSpeeds(leftSpeed, rightSpeed);
 
   Serial.print("X:");
-  Serial.print(offsetAngle.x/1000);
+  Serial.print(accelerometerAngle.x/1000);
   Serial.print(", Y:");
-  Serial.print(offsetAngle.y/1000);
-  Serial.print(", Z: ");
-  Serial.print(offsetAngle.z/1000);
+  Serial.print(accelerometerAngle.y/1000);
+  Serial.print(", Z:");
+  Serial.print(accelerometerAngle.z/1000);
   Serial.print(", Result:");
   Serial.print(result);
   Serial.print(", Left:");
